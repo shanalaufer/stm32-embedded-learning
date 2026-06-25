@@ -9,6 +9,21 @@
 #define USART2_DR    (*(volatile uint32_t *)0x40004404)  // data register
 #define USART2_SR    (*(volatile uint32_t *)0x40004400)  // status register
 
+void uart_send_char(char c)
+{
+    while (!(USART2_SR & (1U << 7)));  // wait until TXE = 1 (ready)
+    USART2_DR = c;                     // send the byte
+}
+
+void uart_send_string(char *str)
+{
+    while (*str)              // loop until the end of the string
+    {
+        uart_send_char(*str); // send the current character
+        str++;                // move to the next character
+    }
+}
+
 int main(void)
 {
     RCC_AHB1ENR |= (1U << 0);
@@ -23,8 +38,7 @@ int main(void)
 
     for(;;)
         {
-            while (!(USART2_SR & (1U << 7)));  // wait until TXE = 1 (ready)
-            USART2_DR = 'H';                   // send the byte
-            for (volatile int i = 0; i < 100000; i++);  // small delay so we don't flood
+            uart_send_string("I Built Firmware!\r\n");
+            for (volatile int i = 0; i < 1000000; i++);  // delay between sends
         }
 }
