@@ -1,0 +1,8 @@
+../Src/main.c:36:13:i2c_wait_flag_sr1	2
+../Src/main.c:42:13:i2c_start	1
+../Src/main.c:49:13:i2c_stop	1
+../Src/main.c:55:13:i2c_send_address	1
+../Src/main.c:63:13:i2c_write_byte	1
+../Src/main.c:71:16:i2c_read_byte	2
+../Src/main.c:83:16:mpu6050_read_reg	1
+../Src/main.c:97:5:main	2
