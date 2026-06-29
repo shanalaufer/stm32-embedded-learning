@@ -54,7 +54,8 @@ static void i2c_start(void) {
 
 /* Generate STOP condition */
 static void i2c_stop(void) {
-	I2C1_CR1 |= (1U << 9); /* STOP bit */
+	I2C1_CR1 |= (1U << 9);              /* STOP bit */
+	while (I2C1_CR1 & (1U << 9));       /* wait until STOP is cleared by hardware */
 }
 
 /* Send the 7-bit device address with R/W bit */
@@ -68,7 +69,7 @@ static void i2c_send_address(uint8_t addr, uint8_t read) {
 static void i2c_write_byte(uint8_t data) {
 	i2c_wait_flag_sr1(1U << 7); /* wait for TXE (transmit empty) */
 	I2C1_DR = data;
-	i2c_wait_flag_sr1(1U << 2); /* wait for BTF (byte transfer finished) */
+	i2c_wait_flag_sr1(1U << 7); /* wait for TXE again (byte accepted) */
 }
 
 /* Read one byte with ACK or NACK afterward */
@@ -119,6 +120,20 @@ static void mpu6050_read_accel(int16_t *ax, int16_t *ay, int16_t *az) {
 	*az = (int16_t) ((zh << 8) | zl);
 }
 
+/* Read gyroscope X, Y, Z (each a signed 16-bit value) */
+static void mpu6050_read_gyro(int16_t *gx, int16_t *gy, int16_t *gz) {
+	uint8_t xh = mpu6050_read_reg(0x43); /* GYRO_XOUT_H */
+	uint8_t xl = mpu6050_read_reg(0x44); /* GYRO_XOUT_L */
+	uint8_t yh = mpu6050_read_reg(0x45);
+	uint8_t yl = mpu6050_read_reg(0x46);
+	uint8_t zh = mpu6050_read_reg(0x47);
+	uint8_t zl = mpu6050_read_reg(0x48);
+
+	*gx = (int16_t) ((xh << 8) | xl);
+	*gy = (int16_t) ((yh << 8) | yl);
+	*gz = (int16_t) ((zh << 8) | zl);
+}
+
 /* Send one character over UART */
 static void uart_send_char(char c) {
 	while (!(USART2_SR & (1U << 7)))
@@ -156,17 +171,10 @@ int main(void) {
 
 	/* ---------- 3. Configure I2C1 ---------- */
 
-	//I2C1_CR1 |= (1U << 15);   /* SWRST: software reset (clear peripheral) */
-	// I2C1_CR1 &= ~(1U << 15);  /* release reset                            */
 	I2C1_CR2 |= (16U << 0); /* FREQ = 16 MHz (APB1 clock in MHz)        */
-
 	I2C1_CCR |= (80U << 0); /* CCR = 80 -> 100 kHz standard mode        */
-
 	I2C1_TRISE = 17U; /* max rise time for standard mode          */
-
-	I2C1_CR1 |= (1U << 0); /* PE: enable the I2C1 peripheral
-
-	 */
+	I2C1_CR1 |= (1U << 0); /* PE: enable the I2C1 peripheral           */
 
 	/* ---------- UART init (USART2 on PA2) ---------- */
 	RCC_AHB1ENR |= (1U << 0); /* GPIOA clock on (PA2 lives here) */
@@ -194,14 +202,16 @@ int main(void) {
 		GPIOA_ODR |= (1U << 5); /* LED ON = success */
 	}
 
-	/* Read accel forever and print over UART */
 	int16_t ax, ay, az;
-	char buf[64];
+	int16_t gx, gy, gz;
+	char buf[128];
 
 	for (;;) {
 		mpu6050_read_accel(&ax, &ay, &az);
+		mpu6050_read_gyro(&gx, &gy, &gz);
 
-		snprintf(buf, sizeof(buf), "ax=%d  ay=%d  az=%d\r\n", ax, ay, az);
+		snprintf(buf, sizeof(buf), "ax=%d ay=%d az=%d gx=%d gy=%d gz=%d\r\n",
+				ax, ay, az, gx, gy, gz);
 		uart_send_string(buf);
 
 		for (volatile int i = 0; i < 1000000; i++)
