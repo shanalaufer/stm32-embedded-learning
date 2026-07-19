@@ -10,4 +10,4 @@
 ../Src/main.c:131:13:mpu6050_read_gyro	32	static
 ../Src/main.c:145:13:uart_send_char	16	static
 ../Src/main.c:152:13:uart_send_string	16	static
-../Src/main.c:157:5:main	232	static
+../Src/main.c:157:5:main	240	static

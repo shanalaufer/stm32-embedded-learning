@@ -219,12 +219,24 @@ int main(void) {
 		float angle = 0.0f;
 		float dt = 0.05f;
 
+		/* ---------- gyro bias calibration: hold still ---------- */
+		uart_send_string("Calibrating, hold still...\r\n");
+		float gx_bias = 0.0f;
+		for (int i = 0; i < 500; i++) {
+			mpu6050_read_gyro(&gx, &gy, &gz);
+			gx_bias += (float)gx;
+		}
+		gx_bias /= 500.0f;
+
+		snprintf(buf, sizeof(buf), "gx_bias=%d\r\n", (int)gx_bias);
+		uart_send_string(buf);
+
 		for (;;) {
 			mpu6050_read_accel(&ax, &ay, &az);
 			mpu6050_read_gyro(&gx, &gy, &gz);
 
 			float accel_angle = atan2f((float)ay, (float)az) * 57.2958f;
-			float gyro_rate = (float)gx / GYRO_SCALE;
+			float gyro_rate = ((float)gx - gx_bias) / GYRO_SCALE;
 			angle = ALPHA * (angle + gyro_rate * dt) + (1.0f - ALPHA) * accel_angle;
 
 			snprintf(buf, sizeof(buf), "angle=%d.%02d ax=%d ay=%d az=%d gx=%d gy=%d gz=%d\r\n",
