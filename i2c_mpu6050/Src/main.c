@@ -1,7 +1,10 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <math.h>
 /* ---------- Base addresses (from RM0390 memory map) ---------- */
 #define PERIPH_BASE     (0x40000000U)
+
+#define CPACR   (*(volatile uint32_t *)(0xE000ED88U))
 
 #define RCC_BASE        (0x40023800U)
 #define GPIOB_BASE      (0x40020400U)
@@ -37,6 +40,10 @@
 #define I2C1_DR         (*(volatile uint32_t *)(I2C1_BASE + 0x10))
 #define I2C1_SR1        (*(volatile uint32_t *)(I2C1_BASE + 0x14))
 #define I2C1_SR2        (*(volatile uint32_t *)(I2C1_BASE + 0x18))
+
+#define ACCEL_SCALE   16384.0f   /* counts per g at +/-2g */
+#define GYRO_SCALE    131.0f     /* counts per deg/s at +/-250 dps */
+#define ALPHA         0.98f      /* filter weight: gyro vs accel */
 
 /* ---------- I2C helper functions ---------- */
 
@@ -148,6 +155,9 @@ static void uart_send_string(const char *s) {
 }
 
 int main(void) {
+
+	CPACR |= (0xFU << 20);   /* enable FPU: full access to CP10 and CP11 */
+
 	/* ---------- 1. Enable clocks ---------- */
 	RCC_AHB1ENR |= (1U << 1); /* GPIOB clock on (bit 1 = GPIOBEN) */
 	RCC_APB1ENR |= (1U << 21); /* I2C1 clock on  (bit 21 = I2C1EN) */
@@ -203,18 +213,26 @@ int main(void) {
 	}
 
 	int16_t ax, ay, az;
-	int16_t gx, gy, gz;
-	char buf[128];
+		int16_t gx, gy, gz;
+		char buf[128];
 
-	for (;;) {
-		mpu6050_read_accel(&ax, &ay, &az);
-		mpu6050_read_gyro(&gx, &gy, &gz);
+		float angle = 0.0f;
+		float dt = 0.05f;
 
-		snprintf(buf, sizeof(buf), "ax=%d ay=%d az=%d gx=%d gy=%d gz=%d\r\n",
-				ax, ay, az, gx, gy, gz);
-		uart_send_string(buf);
+		for (;;) {
+			mpu6050_read_accel(&ax, &ay, &az);
+			mpu6050_read_gyro(&gx, &gy, &gz);
 
-		for (volatile int i = 0; i < 1000000; i++)
-			; /* crude delay */
+			float accel_angle = atan2f((float)ay, (float)az) * 57.2958f;
+			float gyro_rate = (float)gx / GYRO_SCALE;
+			angle = ALPHA * (angle + gyro_rate * dt) + (1.0f - ALPHA) * accel_angle;
+
+			snprintf(buf, sizeof(buf), "angle=%d.%02d ax=%d ay=%d az=%d gx=%d gy=%d gz=%d\r\n",
+					(int)angle, (int)(fabsf(angle - (int)angle) * 100),
+					ax, ay, az, gx, gy, gz);
+			uart_send_string(buf);
+
+			for (volatile int i = 0; i < 100000; i++)
+				;
+		}
 	}
-}
