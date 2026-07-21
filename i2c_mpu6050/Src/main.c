@@ -41,6 +41,13 @@
 #define I2C1_SR1        (*(volatile uint32_t *)(I2C1_BASE + 0x14))
 #define I2C1_SR2        (*(volatile uint32_t *)(I2C1_BASE + 0x18))
 
+/* ---------- TIM2 registers ---------- */
+#define TIM2_BASE       (0x40000000U)
+#define TIM2_CR1        (*(volatile uint32_t *)(TIM2_BASE + 0x00))
+#define TIM2_SR         (*(volatile uint32_t *)(TIM2_BASE + 0x10))
+#define TIM2_PSC        (*(volatile uint32_t *)(TIM2_BASE + 0x28))
+#define TIM2_ARR        (*(volatile uint32_t *)(TIM2_BASE + 0x2C))
+
 #define ACCEL_SCALE   16384.0f   /* counts per g at +/-2g */
 #define GYRO_SCALE    131.0f     /* counts per deg/s at +/-250 dps */
 #define ALPHA         0.98f      /* filter weight: gyro vs accel */
@@ -212,14 +219,20 @@ int main(void) {
 		GPIOA_ODR |= (1U << 5); /* LED ON = success */
 	}
 
-	int16_t ax, ay, az;
+	/* ---------- TIM2: 20 ms tick ---------- */
+		RCC_APB1ENR |= (1U << 0);   /* TIM2 clock on */
+		TIM2_PSC = 15999;           /* 16 MHz / 16000 = 1 kHz */
+		TIM2_ARR = 19;              /* 20 ticks = 20 ms */
+		TIM2_CR1 |= (1U << 0);      /* start counting */
+
+		int16_t ax, ay, az;
 		int16_t gx, gy, gz;
 		char buf[128];
+		int late = 0;
 
 		float angle = 0.0f;
-		float dt = 0.05f;
+		float dt = 0.02f;
 
-		/* ---------- gyro bias calibration: hold still ---------- */
 		uart_send_string("Calibrating, hold still...\r\n");
 		float gx_bias = 0.0f;
 		for (int i = 0; i < 500; i++) {
@@ -231,20 +244,32 @@ int main(void) {
 		snprintf(buf, sizeof(buf), "gx_bias=%d\r\n", (int)gx_bias);
 		uart_send_string(buf);
 
+		TIM2_SR &= ~(1U << 0);   /* clear any stale tick */
+
+		uint32_t n = 0;
+
 		for (;;) {
-			mpu6050_read_accel(&ax, &ay, &az);
-			mpu6050_read_gyro(&gx, &gy, &gz);
+					if (TIM2_SR & (1U << 0)) {
+						late = 1;
+					} else {
+						late = 0;
+						while (!(TIM2_SR & (1U << 0)));
+					}
+					TIM2_SR &= ~(1U << 0);
 
-			float accel_angle = atan2f((float)ay, (float)az) * 57.2958f;
-			float gyro_rate = ((float)gx - gx_bias) / GYRO_SCALE;
-			angle = ALPHA * (angle + gyro_rate * dt) + (1.0f - ALPHA) * accel_angle;
+					mpu6050_read_accel(&ax, &ay, &az);
+					mpu6050_read_gyro(&gx, &gy, &gz);
 
-			snprintf(buf, sizeof(buf), "angle=%d.%02d ax=%d ay=%d az=%d gx=%d gy=%d gz=%d\r\n",
-					(int)angle, (int)(fabsf(angle - (int)angle) * 100),
-					ax, ay, az, gx, gy, gz);
-			uart_send_string(buf);
+					float accel_angle = atan2f((float)ay, (float)az) * 57.2958f;
+					float gyro_rate = ((float)gx - gx_bias) / GYRO_SCALE;
+					angle = ALPHA * (angle + gyro_rate * dt) + (1.0f - ALPHA) * accel_angle;
 
-			for (volatile int i = 0; i < 100000; i++)
-				;
-		}
-	}
+					n++;
+					if (n % 50 == 0) {
+						snprintf(buf, sizeof(buf), "%s tick=%lu angle=%d.%02d\r\n",
+								late ? "LATE" : "ok  ", (unsigned long)(n / 50),
+								(int)angle, (int)(fabsf(angle - (int)angle) * 100));
+						uart_send_string(buf);
+					}
+				}
+}
