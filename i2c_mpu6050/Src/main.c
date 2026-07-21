@@ -235,82 +235,44 @@ int main(void) {
 	}
 
 	/* ---------- TIM2: 20 ms tick ---------- */
-	RCC_APB1ENR |= (1U << 0);
-	TIM2_PSC = 15999;
-	TIM2_ARR = 19;
-	TIM2_CR1 |= (1U << 0);
+		RCC_APB1ENR |= (1U << 0);
+		TIM2_PSC = 15999;
+		TIM2_ARR = 19;
+		TIM2_CR1 |= (1U << 0);
 
-	int16_t gx, gy, gz;
-	char buf[128];
+		int16_t ax, ay, az;
+		int16_t gx, gy, gz;
+		char buf[128];
 
-	uart_send_string("Calibrating, hold still...\r\n");
-	float gx_bias = 0.0f;
-	for (int i = 0; i < 500; i++) {
-		mpu6050_read_gyro(&gx, &gy, &gz);
-		gx_bias += (float)gx;
-	}
-	gx_bias /= 500.0f;
-	uart_send_string("Ready. Wave the sensor back and forth.\r\n");
+		float angle = 0.0f;
+		float dt = 0.02f;
 
-	TIM2_SR &= ~(1U << 0);
+		uart_send_string("Calibrating, hold still...\r\n");
+		float gx_bias = 0.0f;
+		for (int i = 0; i < 500; i++) {
+			mpu6050_read_gyro(&gx, &gy, &gz);
+			gx_bias += (float)gx;
+		}
+		gx_bias /= 500.0f;
 
-	for (;;) {
-		/* collect 128 samples at 50 Hz = 2.56 seconds */
-		for (int i = 0; i < N_FFT; i++) {
+		TIM2_SR &= ~(1U << 0);
+
+		for (;;) {
 			if (!(TIM2_SR & (1U << 0))) {
 				while (!(TIM2_SR & (1U << 0)));
 			}
 			TIM2_SR &= ~(1U << 0);
 
+			mpu6050_read_accel(&ax, &ay, &az);
 			mpu6050_read_gyro(&gx, &gy, &gz);
-			re[i] = ((float)gx - gx_bias) / GYRO_SCALE;
-			im[i] = 0.0f;
-		}
 
-		/* remove the average so a constant offset doesn't swamp bin 0 */
-		float mean = 0.0f;
-		for (int i = 0; i < N_FFT; i++)
-			mean += re[i];
-		mean /= (float)N_FFT;
-		for (int i = 0; i < N_FFT; i++)
-			re[i] -= mean;
+			float accel_angle = atan2f((float)ay, (float)az) * 57.2958f;
+			float gyro_rate = ((float)gx - gx_bias) / GYRO_SCALE;
+			angle = ALPHA * (angle + gyro_rate * dt) + (1.0f - ALPHA) * accel_angle;
 
-		fft();
-
-		/* magnitudes, and find the largest */
-		float mag[21];
-		float peak_mag = 0.0f;
-		int peak_k = 1;
-		for (int k = 1; k < 21; k++) {
-			mag[k] = sqrtf(re[k] * re[k] + im[k] * im[k]) * 2.0f / (float)N_FFT;
-			if (mag[k] > peak_mag) {
-				peak_mag = mag[k];
-				peak_k = k;
-			}
-		}
-		if (peak_mag < 0.001f)
-			peak_mag = 0.001f;
-
-		/* draw, scaled so the biggest bin is 40 stars */
-		uart_send_string("---- spectrum ----\r\n");
-		for (int k = 1; k < 21; k++) {
-			int bars = (int)(mag[k] * 40.0f / peak_mag);
-			char stars[41];
-			int s;
-			for (s = 0; s < bars; s++)
-				stars[s] = '*';
-			stars[s] = '\0';
-			int hz10 = k * 500 / N_FFT;
-			snprintf(buf, sizeof(buf), "%2d.%d Hz |%s\r\n", hz10 / 10, hz10 % 10, stars);
+			/* angle sent as hundredths of a degree, so the sign survives */
+			snprintf(buf, sizeof(buf), "%d,%d,%d,%d,%d,%d,%d\r\n",
+					(int)(angle * 100.0f), ax, ay, az, gx, gy, gz);
 			uart_send_string(buf);
 		}
-		int phz10 = peak_k * 500 / N_FFT;
-		snprintf(buf, sizeof(buf), "peak = %d.%d Hz  mag=%d.%02d\r\n\r\n",
-				phz10 / 10, phz10 % 10,
-				(int)peak_mag, (int)((peak_mag - (int)peak_mag) * 100));
-		uart_send_string(buf);
-
-		/* pause so one chart stays readable */
-		for (volatile int d = 0; d < 4000000; d++);
 	}
-}
